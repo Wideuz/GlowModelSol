@@ -41,6 +41,7 @@ public class GlowModules
             var origin = ToEKVString(pawn.GetAbsOrigin());
             var angles = ToEKVString(pawn.GetAbsAngles());
             var entityMgr = _sharedSystem.GetEntityManager();
+            var transmitMgr = _sharedSystem.GetTransmitManager();
 
             // Relay (不可見)
             var relay = entityMgr.SpawnEntitySync<IBaseModelEntity>(
@@ -72,7 +73,7 @@ public class GlowModules
 
             if (relay == null || glow == null)
             {
-                _logger.LogWarning("Glow entity spawn failed");
+                _logger.LogWarning("Glow entity spawn failed for slot {slot}", slot.AsPrimitive());
                 return;
             }
 
@@ -86,14 +87,20 @@ public class GlowModules
             catch
             {
                 _logger.LogWarning("FollowEntity failed, fallback to SetParent only");
-
                 relay.AcceptInput("SetParent", pawn);
                 glow.AcceptInput("SetParent", relay);
             }
 
             _glowingEntities[slot] = new List<IBaseModelEntity> { glow, relay };
 
+            // 使用 TransmitManager 隱藏自己
             var controller = entityMgr.FindPlayerControllerBySlot(slot);
+            if (controller != null)
+            {
+                transmitMgr.AddEntityHooks(glow, true);
+                transmitMgr.SetEntityState(glow.Index, controller.Index, false, -1);
+            }
+
             var playerName = controller?.PlayerName ?? "Unknown";
             _logger.LogInformation(
                 "PlayerGlow enabled for slot {slot} (player={player}, model={model})",
@@ -112,10 +119,13 @@ public class GlowModules
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "EnablePlayerGlow failed");
+            _logger.LogError(ex, "EnablePlayerGlow failed for slot {slot}", slot.AsPrimitive());
         }
     }
 
+    /// <summary>
+    /// 停用玩家 Glow
+    /// </summary>
     public void DisablePlayerGlow(PlayerSlot slot)
     {
         if (_glowingEntities.TryGetValue(slot, out var entities))
@@ -125,12 +135,11 @@ public class GlowModules
                 if (ent != null && ent.IsValidEntity)
                     ent.AcceptInput("Kill");
             }
+
             _glowingEntities.Remove(slot);
             _logger.LogInformation("PlayerGlow disabled for slot {slot}", slot.AsPrimitive());
         }
     }
-
-
 
     /// <summary>
     /// 清理所有 Glow
@@ -145,6 +154,7 @@ public class GlowModules
                     ent.AcceptInput("Kill");
             }
         }
+
         _glowingEntities.Clear();
         _logger.LogInformation("All glow entities cleaned up");
     }

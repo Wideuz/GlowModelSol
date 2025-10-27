@@ -10,4 +10,8 @@
     <PackageReference Include="ModSharp.Sharp.Shared" Version="2.0.44" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\MS_AdminSystem_Remake\AdminSystem\PlayerManager_Shared.Abstractions\PlayerManager_Shared.Abstractions.csproj" />
+  </ItemGroup>
+
 </Project>
