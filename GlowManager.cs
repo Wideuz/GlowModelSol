@@ -1,11 +1,10 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using GlowPlugin;
+using Microsoft.Extensions.Logging;
 using Sharp.Shared;
 using Sharp.Shared.Enums;
-using Sharp.Shared.GameEntities;
 using Sharp.Shared.Objects;
 using Sharp.Shared.Types;
-
-namespace GlowPlugin;
+using Sharp.Shared.Units;
 
 public class GlowManager
 {
@@ -48,12 +47,7 @@ public class GlowManager
             return ECommandAction.Stopped;
         }
 
-        // 使用 Relay + GlowModel 的玩家 Glow
         _glowModules.EnablePlayerGlow(pawn, client.Slot);
-
-        // 預留：之後可同時開啟物件 Glow
-        // _glowModules.EnableObjectGlow(pawn, client.Slot);
-
         client.ConsolePrint("玩家 Glow 已啟用！");
         return ECommandAction.Stopped;
     }
@@ -63,17 +57,15 @@ public class GlowManager
         if (!client.IsValid || client.IsFakeClient)
             return ECommandAction.Stopped;
 
-        // Relay + GlowModel 清理
         _glowModules.DisablePlayerGlow(client.Slot);
-
-        // 預留：之後可同時關閉物件 Glow
-        // _glowModules.DisableObjectGlow(client.Slot);
-
         client.ConsolePrint("玩家 Glow 已停用！");
         return ECommandAction.Stopped;
     }
 
+    public void DisableGlowForSlot(PlayerSlot slot) => _glowModules.DisablePlayerGlow(slot);
+
     public void CleanupAll() => _glowModules.CleanupAll();
 }
+
 
 

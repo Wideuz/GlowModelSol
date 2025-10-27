@@ -14,6 +14,8 @@ public class GlowModules
 {
     private readonly ISharedSystem _sharedSystem;
     private readonly ILogger _logger;
+
+    // slot -> [glow, relay]
     private readonly Dictionary<PlayerSlot, List<IBaseModelEntity>> _glowingEntities = new();
 
     public GlowModules(ISharedSystem sharedSystem, ILogger logger)
@@ -22,10 +24,10 @@ public class GlowModules
         _logger = logger;
     }
 
-    // -------------------------
-    // 玩家 Glow (Relay + GlowModel)
-    // -------------------------
-    public void EnablePlayerGlow(IPlayerPawn pawn, PlayerSlot slot)
+    /// <summary>
+    /// 啟用玩家 Glow
+    /// </summary>
+    public void EnablePlayerGlow(IPlayerPawn pawn, PlayerSlot slot, int duration = 0)
     {
         try
         {
@@ -52,7 +54,7 @@ public class GlowModules
                     ["rendermode"] = (int)RenderMode.None,
                 });
 
-            // Glow 模型 (可見 + 發光)
+            // Glow 模型
             var glow = entityMgr.SpawnEntitySync<IBaseModelEntity>(
                 "prop_dynamic",
                 new Dictionary<string, KeyValuesVariantValueItem>
@@ -61,7 +63,11 @@ public class GlowModules
                     ["origin"] = origin,
                     ["angles"] = angles,
                     ["spawnflags"] = 256,
-                    ["renderamt"] = 1, // 確保模型有最小透明度
+                    ["renderamt"] = 1,
+                    ["glowcolor"] = "255 0 0",
+                    ["glowrange"] = 5000,
+                    ["glowteam"] = -1,
+                    ["glowstate"] = 3
                 });
 
             if (relay == null || glow == null)
@@ -70,19 +76,20 @@ public class GlowModules
                 return;
             }
 
-            // 綁定跟隨
-            relay.AcceptInput("FollowEntity", pawn);
-            glow.AcceptInput("FollowEntity", relay);
+            // 嘗試 FollowEntity
+            try
+            {
+                relay.AcceptInput("FollowEntity", pawn, relay, "!activator");
+                glow.AcceptInput("FollowEntity", relay, glow, "!activator");
+                _logger.LogInformation("Glow follow established via FollowEntity");
+            }
+            catch
+            {
+                _logger.LogWarning("FollowEntity failed, fallback to SetParent only");
 
-            // 設 GlowProperty
-            var gp = glow.GetGlowProperty();
-            gp.Glowing = true;
-            gp.GlowColorOverride = new Color32(255, 0, 0, 255); // 紅色
-            // 或者用 gp.GlowColor = new Vector(1.0f, 0.0f, 0.0f);
-            gp.GlowRangeMin = 0;
-            gp.GlowRangeMax = 5000;
-            gp.GlowTeam = -1; // -1 = 所有人可見
-            gp.GlowType = 3;  // Always on
+                relay.AcceptInput("SetParent", pawn);
+                glow.AcceptInput("SetParent", relay);
+            }
 
             _glowingEntities[slot] = new List<IBaseModelEntity> { glow, relay };
 
@@ -92,6 +99,16 @@ public class GlowModules
                 "PlayerGlow enabled for slot {slot} (player={player}, model={model})",
                 slot.AsPrimitive(), playerName, model
             );
+
+            // 如果有 duration → 到期自動清理
+            if (duration > 0)
+            {
+                _sharedSystem.GetModSharp().PushTimer(() =>
+                {
+                    DisablePlayerGlow(slot);
+                    return TimerAction.Stop;
+                }, duration, GameTimerFlags.StopOnRoundEnd | GameTimerFlags.StopOnMapEnd);
+            }
         }
         catch (Exception ex)
         {
@@ -106,72 +123,18 @@ public class GlowModules
             foreach (var ent in entities)
             {
                 if (ent != null && ent.IsValidEntity)
-                {
                     ent.AcceptInput("Kill");
-                }
             }
             _glowingEntities.Remove(slot);
             _logger.LogInformation("PlayerGlow disabled for slot {slot}", slot.AsPrimitive());
         }
     }
 
-    // -------------------------
-    // 物件 Glow (保留接口)
-    // -------------------------
-    public void EnableObjectGlow(IPlayerPawn pawn, PlayerSlot slot)
-    {
-        try
-        {
-            var model = GetModelNameSafe(pawn) ?? "";
-            var origin = ToEKVString(pawn.GetAbsOrigin());
-            var angles = ToEKVString(pawn.GetAbsAngles());
 
-            var modelGlow = _sharedSystem.GetEntityManager().SpawnEntitySync<IBaseModelEntity>(
-                "prop_dynamic",
-                new Dictionary<string, KeyValuesVariantValueItem>
-                {
-                    ["model"] = model,
-                    ["origin"] = origin,
-                    ["angles"] = angles,
-                    ["spawnflags"] = 256,
-                    ["rendermode"] = (int)RenderMode.Normal,
-                });
 
-            if (modelGlow == null)
-            {
-                _logger.LogWarning("Glow object spawn failed");
-                return;
-            }
-
-            var gp = modelGlow.GetGlowProperty();
-            gp.Glowing = true;
-            gp.GlowColorOverride = new Color32(0, 0, 255, 255); // 藍色
-            gp.GlowRangeMin = 0;
-            gp.GlowRangeMax = 5000;
-            gp.GlowTeam = 0;
-            gp.GlowType = 3;
-
-            if (!_glowingEntities.ContainsKey(slot))
-                _glowingEntities[slot] = new List<IBaseModelEntity>();
-
-            _glowingEntities[slot].Add(modelGlow);
-
-            _logger.LogInformation(
-                "ObjectGlow enabled for slot {slot}, model={model}",
-                slot.AsPrimitive(), model
-            );
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "EnableObjectGlow failed");
-        }
-    }
-
-    public void DisableObjectGlow(PlayerSlot slot) => DisablePlayerGlow(slot);
-
-    // -------------------------
-    // 全部清理
-    // -------------------------
+    /// <summary>
+    /// 清理所有 Glow
+    /// </summary>
     public void CleanupAll()
     {
         foreach (var kv in _glowingEntities)
@@ -179,18 +142,14 @@ public class GlowModules
             foreach (var ent in kv.Value)
             {
                 if (ent != null && ent.IsValidEntity)
-                {
                     ent.AcceptInput("Kill");
-                }
             }
         }
         _glowingEntities.Clear();
         _logger.LogInformation("All glow entities cleaned up");
     }
 
-    // -------------------------
     // 工具方法
-    // -------------------------
     private static string? GetModelNameSafe(IPlayerPawn pawn)
     {
         var body = pawn.GetBodyComponent();

@@ -4,9 +4,6 @@ using Sharp.Shared.Listeners;
 using Sharp.Shared.Managers;
 using Sharp.Shared.Objects;
 using Sharp.Shared.Units;
-using System;
-
-namespace GlowPlugin;
 
 public sealed class GlowMain : IModSharpModule, IEventListener
 {
@@ -69,15 +66,13 @@ public sealed class GlowMain : IModSharpModule, IEventListener
 
         if (ev.Name == "round_start")
         {
-            // 回合開始時清理所有 Glow
             _glowManager.CleanupAll();
             _logger.LogInformation("新回合開始，已清理所有 Glow");
         }
         else if (ev.Name == "player_disconnect")
         {
-            // 玩家斷線時，針對該玩家清理 Glow
             var slot = (PlayerSlot)ev.GetInt("userid");
-            _glowManager.CleanupAll(); // 這裡可以改成針對單一玩家 Disable
+            _glowManager.DisableGlowForSlot(slot);
             _logger.LogInformation("玩家斷線，已清理該玩家 Glow");
         }
     }
