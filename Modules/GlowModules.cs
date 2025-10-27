@@ -7,6 +7,7 @@ using Sharp.Shared.Types;
 using Sharp.Shared.Units;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace GlowPlugin;
 
@@ -170,7 +171,9 @@ public class GlowModules
     }
 
     private static string ToEKVString(Vector v)
-        => $"{v.X} {v.Y} {v.Z}";
+        => $"{v.X.ToString("F6", CultureInfo.InvariantCulture)} " +
+           $"{v.Y.ToString("F6", CultureInfo.InvariantCulture)} " +
+           $"{v.Z.ToString("F6", CultureInfo.InvariantCulture)}";
 }
 
 
