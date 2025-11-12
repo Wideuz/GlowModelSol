@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
+using PlayerManager_Shared; // ✅ 引入 GamePlayer
 using Sharp.Shared;
 using Sharp.Shared.Enums;
 using Sharp.Shared.GameEntities;
@@ -25,108 +26,75 @@ public class GlowModules
         _logger = logger;
     }
 
-    /// <summary>
-    /// 啟用玩家 Glow
-    /// </summary>
-    public void EnablePlayerGlow(IPlayerPawn pawn, PlayerSlot slot, int duration = 0)
+    public bool CreateGlow(IGameClient player, IPlayerPawn pawn, Color32 color, int maxDistance, IEnumerable<EntityIndex> whoCanSee)
     {
-        try
+        var model = GetModelNameSafe(pawn);
+        if (string.IsNullOrEmpty(model))
+            return false;
+
+        var entityMgr = _sharedSystem.GetEntityManager();
+        var transmitMgr = _sharedSystem.GetTransmitManager();
+
+        // Relay
+        var relayKv = new Dictionary<string, KeyValuesVariantValueItem>
         {
-            if (_glowingEntities.ContainsKey(slot))
-            {
-                _logger.LogInformation("Glow already active for slot {slot}", slot.AsPrimitive());
-                return;
-            }
+            { "model", model },
+            { "spawnflags", 256 },
+            { "rendermode", 10 },
+            { "disablereceiveshadows", true },
+            { "disableshadows", true },
+        };
 
-            var model = GetModelNameSafe(pawn) ?? "";
-            var origin = ToEKVString(pawn.GetAbsOrigin());
-            var angles = ToEKVString(pawn.GetAbsAngles());
-            var entityMgr = _sharedSystem.GetEntityManager();
-            var transmitMgr = _sharedSystem.GetTransmitManager();
+        if (entityMgr.SpawnEntitySync<IBaseModelEntity>("prop_dynamic", relayKv) is not { } relay)
+            return false;
 
-            // Relay (不可見)
-            var relay = entityMgr.SpawnEntitySync<IBaseModelEntity>(
-                "prop_dynamic",
-                new Dictionary<string, KeyValuesVariantValueItem>
-                {
-                    ["model"] = model,
-                    ["origin"] = origin,
-                    ["angles"] = angles,
-                    ["spawnflags"] = 256,
-                    ["rendermode"] = (int)RenderMode.None,
-                });
-
-            // Glow 模型
-            var glow = entityMgr.SpawnEntitySync<IBaseModelEntity>(
-                "prop_dynamic",
-                new Dictionary<string, KeyValuesVariantValueItem>
-                {
-                    ["model"] = model,
-                    ["origin"] = origin,
-                    ["angles"] = angles,
-                    ["spawnflags"] = 256,
-                    ["renderamt"] = 1,
-                    ["glowcolor"] = "255 0 0",
-                    ["glowrange"] = 5000,
-                    ["glowteam"] = -1,
-                    ["glowstate"] = 3
-                });
-
-            if (relay == null || glow == null)
-            {
-                _logger.LogWarning("Glow entity spawn failed for slot {slot}", slot.AsPrimitive());
-                return;
-            }
-
-            // 嘗試 FollowEntity
-            try
-            {
-                relay.AcceptInput("FollowEntity", pawn, relay, "!activator");
-                glow.AcceptInput("FollowEntity", relay, glow, "!activator");
-                _logger.LogInformation("Glow follow established via FollowEntity");
-            }
-            catch
-            {
-                _logger.LogWarning("FollowEntity failed, fallback to SetParent only");
-                relay.AcceptInput("SetParent", pawn);
-                glow.AcceptInput("SetParent", relay);
-            }
-
-            _glowingEntities[slot] = new List<IBaseModelEntity> { glow, relay };
-
-            // 使用 TransmitManager 隱藏自己
-            var controller = entityMgr.FindPlayerControllerBySlot(slot);
-            if (controller != null)
-            {
-                transmitMgr.AddEntityHooks(glow, true);
-                transmitMgr.SetEntityState(glow.Index, controller.Index, false, -1);
-            }
-
-            var playerName = controller?.PlayerName ?? "Unknown";
-            _logger.LogInformation(
-                "PlayerGlow enabled for slot {slot} (player={player}, model={model})",
-                slot.AsPrimitive(), playerName, model
-            );
-
-            // 如果有 duration → 到期自動清理
-            if (duration > 0)
-            {
-                _sharedSystem.GetModSharp().PushTimer(() =>
-                {
-                    DisablePlayerGlow(slot);
-                    return TimerAction.Stop;
-                }, duration, GameTimerFlags.StopOnRoundEnd | GameTimerFlags.StopOnMapEnd);
-            }
-        }
-        catch (Exception ex)
+        // Glow
+        var glowKv = new Dictionary<string, KeyValuesVariantValueItem>
         {
-            _logger.LogError(ex, "EnablePlayerGlow failed for slot {slot}", slot.AsPrimitive());
+            { "model", model },
+            { "spawnflags", 256 },
+            { "disablereceiveshadows", true },
+            { "disableshadows", true },
+            { "glowcolor", $"{color.R} {color.G} {color.B} {color.A}" },
+            { "glowrangemin", 30 },
+            { "glowrange", maxDistance },
+            { "glowteam", -1 },
+            { "glowstate", 3 },
+            { "renderamt", 1 },
+        };
+
+        if (entityMgr.SpawnEntitySync<IBaseModelEntity>("prop_dynamic", glowKv) is not { } glow)
+        {
+            relay.AcceptInput("Kill");
+            return false;
         }
+
+        // 綁定跟隨
+        relay.AcceptInput("FollowEntity", pawn, null, "!activator");
+        glow.AcceptInput("FollowEntity", relay, null, "!activator");
+
+        // 傳輸控制
+        var slot = player.Slot;
+        var controllerIndex = player.ControllerIndex;
+
+        transmitMgr.AddEntityHooks(relay, false);
+        transmitMgr.AddEntityHooks(glow, false);
+        transmitMgr.SetEntityOwner(relay.Index, controllerIndex);
+        transmitMgr.SetEntityOwner(glow.Index, controllerIndex);
+        transmitMgr.SetEntityState(relay.Index, controllerIndex, false, -1);
+        transmitMgr.SetEntityState(glow.Index, controllerIndex, false, -1);
+
+        foreach (var index in whoCanSee)
+        {
+            transmitMgr.SetEntityState(relay.Index, index, true, -1);
+            transmitMgr.SetEntityState(glow.Index, index, true, -1);
+        }
+
+        _glowingEntities[slot] = new List<IBaseModelEntity> { glow, relay };
+
+        return true;
     }
 
-    /// <summary>
-    /// 停用玩家 Glow
-    /// </summary>
     public void DisablePlayerGlow(PlayerSlot slot)
     {
         if (_glowingEntities.TryGetValue(slot, out var entities))
@@ -142,9 +110,6 @@ public class GlowModules
         }
     }
 
-    /// <summary>
-    /// 清理所有 Glow
-    /// </summary>
     public void CleanupAll()
     {
         foreach (var kv in _glowingEntities)
@@ -157,10 +122,8 @@ public class GlowModules
         }
 
         _glowingEntities.Clear();
-        _logger.LogInformation("All glow entities cleaned up");
     }
 
-    // 工具方法
     private static string? GetModelNameSafe(IPlayerPawn pawn)
     {
         var body = pawn.GetBodyComponent();
@@ -169,11 +132,6 @@ public class GlowModules
         var modelState = skeleton?.GetModelState();
         return modelState?.ModelName;
     }
-
-    private static string ToEKVString(Vector v)
-        => $"{v.X.ToString("F6", CultureInfo.InvariantCulture)} " +
-           $"{v.Y.ToString("F6", CultureInfo.InvariantCulture)} " +
-           $"{v.Z.ToString("F6", CultureInfo.InvariantCulture)}";
 }
 
 

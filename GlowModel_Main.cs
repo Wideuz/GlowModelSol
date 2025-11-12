@@ -6,7 +6,7 @@ using Sharp.Shared.Managers;
 using Sharp.Shared.Objects;
 using Sharp.Shared.Units;
 
-public sealed class GlowMain : IModSharpModule, IEventListener
+public sealed class GlowMain : IModSharpModule, IEventListener, IGameListener
 {
     public string DisplayName => "PlayerManager_Shared";
     public string DisplayAuthor => "Widez";
@@ -15,8 +15,8 @@ public sealed class GlowMain : IModSharpModule, IEventListener
     private readonly ISharedSystem _sharedSystem;
     private readonly IEventManager _events;
 
-    private GlowManager? _glowManager;
-    private IPlayerManager? _playerManager;
+    private GlowManager _glowManager;
+    private IPlayerManager _playerManager;
 
     public GlowMain(ISharedSystem sharedSystem,
         string? dllPath = null,
@@ -39,7 +39,7 @@ public sealed class GlowMain : IModSharpModule, IEventListener
     public void PostInit()
     {
         _events.InstallEventListener(this);
-        _events.HookEvent("round_start");
+        _sharedSystem.GetModSharp().InstallGameListener(this);
         _events.HookEvent("player_disconnect");
     }
 
@@ -70,35 +70,46 @@ public sealed class GlowMain : IModSharpModule, IEventListener
     public void Shutdown()
     {
         _events.RemoveEventListener(this);
+        _sharedSystem.GetModSharp().RemoveGameListener(this);
         _glowManager?.CleanupAll();
         _glowManager?.UnregisterCommands();
     }
 
-    public int ListenerVersion => 1;
-    public int ListenerPriority => 0;
+    public int ListenerVersion => IGameListener.ApiVersion;
+    public int ListenerPriority => int.MaxValue;
 
+    public void OnRoundRestart()
+    {
+        _logger.LogInformation("回合即將重啟，清理暫存狀態");
+        _glowManager?.CleanupAll();
+    }
     public void FireGameEvent(IGameEvent ev)
     {
-        if (ev.Name == "round_start")
+        
+        if (ev.Name == "player_disconnect")
         {
-            _glowManager?.CleanupAll();
-        }
-        else if (ev.Name == "player_disconnect")
-        {
-            var slot = (PlayerSlot)ev.GetInt("userid");
-            _glowManager?.DisableGlowForSlot(slot);
+            int rawUserId = ev.GetInt("userid");
+            var userId = new UserID((ushort)rawUserId);
 
-            if (_playerManager != null)
+            var client = _sharedSystem.GetClientManager().GetGameClient(userId);
+            if (client == null || !client.IsValid)
             {
-                var player = _playerManager.GetPlayer(slot);
-                _logger.LogInformation("玩家斷線：{name} (Slot {slot})，已清理 Glow",
-                    player?.Name ?? "Unknown", slot.AsPrimitive());
+                _logger.LogInformation("Player disconnect：Unknown Client (UserID {UserId})，Clear Glow", rawUserId);
+                return;
             }
-            else
+
+            var player = _playerManager.GetPlayer(client);
+            if (player == null)
             {
-                _logger.LogInformation("玩家斷線：Slot {slot}，已清理 Glow", slot.AsPrimitive());
+                _logger.LogInformation("Player disconnect：Unknown Player (UserID {UserId})，Clear Glow", rawUserId);
+                return;
             }
+
+            _glowManager?.DisableGlowForSlot(player.Client.Slot);
+            _logger.LogInformation("Player disconnect：{Name} (Slot {Slot})，Clear Glow",
+                player.Name, player.Client.Slot.AsPrimitive());
         }
+
     }
 }
 

@@ -41,7 +41,7 @@ public class GlowManager
 
     private ECommandAction OnGlowCommand(IGameClient client, StringCommand command)
     {
-        if (!client.IsValid || client.IsFakeClient)
+        if (!client.IsValid )
             return ECommandAction.Stopped;
 
         var target = FindTargetPlayer(command, client);
@@ -58,14 +58,14 @@ public class GlowManager
             return ECommandAction.Stopped;
         }
 
-        _glowModules.EnablePlayerGlow(pawn, target.Client.Slot);
+        _glowModules.CreateGlow(target.Client, pawn, new Color32(255, 0, 0, 255), 5000, new[] { client.ControllerIndex });
         client.ConsolePrint($"已對玩家 {target.Name} 啟用 Glow！");
         return ECommandAction.Stopped;
     }
 
     private ECommandAction OnDisableGlowCommand(IGameClient client, StringCommand command)
     {
-        if (!client.IsValid || client.IsFakeClient)
+        if (!client.IsValid)
             return ECommandAction.Stopped;
 
         var target = FindTargetPlayer(command, client);
@@ -85,25 +85,20 @@ public class GlowManager
     /// </summary>
     private IGamePlayer? FindTargetPlayer(StringCommand command, IGameClient self)
     {
-        // 預設對自己
-        IGamePlayer? target = _playerManager.GetPlayer(self);
+        // 如果沒有參數 → 預設自己
+        if (command.ArgCount == 0)
+            return _playerManager.GetPlayer(self);
 
-        if (command.ArgCount > 0)
-        {
-            var nameArg = command.GetArg(1);
-            var players = _playerManager.GetPlayers(false);
+        var nameArg = command.GetArg(1);
+        var players = _playerManager.GetPlayers(false);
 
-            var match = players.FirstOrDefault(p =>
-                p.IsValid() &&
-                p.IsConnected &&
-                !string.IsNullOrEmpty(p.Name) &&
-                p.Name.Contains(nameArg, StringComparison.OrdinalIgnoreCase));
+        var match = players.FirstOrDefault(p =>
+            p.Client.IsValid &&
+            p.IsConnected &&
+            !string.IsNullOrEmpty(p.Name) &&
+            p.Name.Contains(nameArg, StringComparison.OrdinalIgnoreCase));
 
-            if (match != null)
-                target = match;
-        }
-
-        return target;
+        return match; // 找不到就回傳 null
     }
 
     public void DisableGlowForSlot(PlayerSlot slot) => _glowModules.DisablePlayerGlow(slot);
